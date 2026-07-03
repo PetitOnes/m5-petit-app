@@ -38,7 +38,8 @@ uv run uvicorn main:app --port 8765
 
 | 変数名 | 説明 | デフォルト |
 | --- | --- | --- |
-| `CHARACTER_ID` | M5キャラクターID | `petit` |
+| `CHARACTER_ID` | M5キャラクターID(ファイルパス等に使う英数字ID) | `petit` |
+| `CHARACTER_NAME` | 表示用の名前(ヘッダーやデフォルトSOULで使用、日本語可) | `CHARACTER_ID`と同じ |
 | `USER_ID` | 人間側のユーザーID | `user` |
 | `M5_HOST` / `M5_HOSTS` | M5デバイスのホスト名/IP(カンマ区切りでフォールバック指定可) | — |
 | `VOICE_API_HOST` | 音声認識(ASR)サーバーのホスト(マイク文字起こし用) | — |
