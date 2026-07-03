@@ -35,6 +35,7 @@ from pydantic import BaseModel
 # ===================== Config =====================
 
 CHARACTER_ID = os.environ.get("CHARACTER_ID", "petit")
+CHARACTER_NAME = os.environ.get("CHARACTER_NAME", CHARACTER_ID)
 USER_ID = os.environ.get("USER_ID", "user")
 VOICE_API_HOST = os.environ.get("VOICE_API_HOST", "")
 _ASR_URL = f"http://{VOICE_API_HOST}:8765" if VOICE_API_HOST else ""
@@ -269,7 +270,7 @@ async def call_claude(message: str, source: str = "chat") -> str:
         mcp_config = PROJECT_DIR / "autonomous-mcp.json"
 
     soul_file = char_data_dir / "SOUL.md"
-    soul = soul_file.read_text(encoding="utf-8") if soul_file.exists() else f"あなたは{CHARACTER_ID}です。"
+    soul = soul_file.read_text(encoding="utf-8") if soul_file.exists() else f"あなたは{CHARACTER_NAME}です。"
 
     now_str = datetime.now(TZ).strftime("%Y-%m-%d %H:%M (JST)")
     system_prompt = (
@@ -900,7 +901,7 @@ hr {{ border: none; border-top: 1px solid #eee; margin: 10px 0; }}
 </style>
 </head>
 <body>
-<header>M5 Petit — {CHARACTER_ID}</header>
+<header>M5 Petit — {CHARACTER_NAME}</header>
 <div class="tabs">
   <button class="tab active" onclick="showTab('album')">📷 アルバム</button>
   <button class="tab" onclick="showTab('voice')">🎙️ ボイスメモ</button>
