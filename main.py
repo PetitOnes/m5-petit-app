@@ -46,7 +46,7 @@ SCRIPTS_DIR = PROJECT_DIR / "scripts"
 MAILBOX_DIR = DATA_DIR / "mailbox"
 ALBUM_DIR = DATA_DIR / "photo_album"
 VOICE_MEMO_DIR = DATA_DIR / "voice_memo"
-NOTEBOOK_FILE = DATA_DIR / "notes" / USER_ID / "notebook.json"
+NOTEBOOK_FILE = DATA_DIR / "notebook" / USER_ID / "notebook.json"
 MAILBOX_METADATA_FILE = DATA_DIR / "mailbox" / ".metadata.json"
 
 # Per-character data (shared on-disk layout with other M5 Petit tools, e.g. MCP servers)
@@ -264,9 +264,9 @@ def _extract_reply_text(raw_jsonl: str) -> str:
 async def call_claude(message: str, source: str = "chat") -> str:
     """Call Claude CLI for the configured character. Saves a stream log under STREAM_LOG_DIR for the 記録 tab."""
     char_data_dir = CHAR_DATA_DIR
-    mcp_config = char_data_dir / "config" / "mcp.json"
+    mcp_config = char_data_dir / "config" / "autonomous-mcp.json"
     if not mcp_config.exists():
-        mcp_config = PROJECT_DIR / "mcp.json"
+        mcp_config = PROJECT_DIR / "autonomous-mcp.json"
 
     soul_file = char_data_dir / "SOUL.md"
     soul = soul_file.read_text(encoding="utf-8") if soul_file.exists() else f"あなたは{CHARACTER_ID}です。"
