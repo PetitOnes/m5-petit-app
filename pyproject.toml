@@ -1,0 +1,20 @@
+[project]
+name = "m5-petit-app"
+version = "0.1.0"
+description = "Dashboard server for M5 Petit — album, voice memo, notebook, mailbox, M5 watcher"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi>=0.115.0",
+    "uvicorn>=0.30.0",
+    "python-multipart>=0.0.9",
+    "Pillow>=10.0.0",
+    "websockets>=13.0",
+]
+
+[project.scripts]
+m5-petit-app = "main:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
