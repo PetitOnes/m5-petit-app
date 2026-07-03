@@ -46,20 +46,27 @@ uv run uvicorn main:app --port 8765
 | `PROJECT_DIR` | Claude CLI・スクリプトのプロジェクトルート | このファイルの親ディレクトリ |
 | `PORT` | 待受ポート | `8765` |
 
-データは `PETIT_DATA_DIR` 配下に以下のように保存されます(このアプリ自身が読み書きするものだけを記載。memory-mcp等の他ツールが使う設定/データファイルは含みません)。
+データは `PETIT_DATA_DIR` 配下に以下のように保存されます。`petit_data/` は他のM5 Petitツール(MCPサーバーなど)とも共有するディレクトリなので、m5-petit-appが実際に読み書きしないパスも構成として記載しています(該当行に注記)。
 
 ```
 petit_data/
+├── resources/petit.png                   # キャラクター画像など(他ツール用、任意)
 ├── mailbox/                              # メールボックス
 ├── photo_album/<character_id|user_id>/   # アルバム
 ├── voice_memo/<character_id|user_id>/    # ボイスメモ
-├── notes/<user_id>/notebook.json         # ノート
+├── notebook/<user_id>/notebook.json      # ノート
 └── characters/<character_id>/
-    ├── SOUL.md                           # キャラクターの人格定義(任意)
-    ├── config/mcp.json                   # MCPサーバー設定(任意)
+    ├── SOUL.md                           # キャラクターの人格定義(任意、なければデフォルト文言)
     ├── chat_histories/chat_history.json  # 会話ログ
     ├── stream_logs/*.jsonl               # 記録(Claude CLIとのやり取りの生ログ)
-    └── diary/YYYY-MM-DD.txt              # 日記(日付ごとにキャッシュ)
+    ├── diary/YYYY-MM-DD.txt              # 日記(日付ごとにキャッシュ)
+    ├── config/
+    │   ├── autonomous-mcp.json           # MCPサーバー設定(任意。なければ PROJECT_DIR/autonomous-mcp.json)
+    │   ├── config.json                   # (他ツール用、m5-petit-appは未使用)
+    │   ├── settings.json                 # (他ツール用、m5-petit-appは未使用)
+    │   └── voice_settings.json           # (他ツール用、m5-petit-appは未使用)
+    ├── notes/XXXXX.md                    # キャラクター自身のメモ(他ツール用、m5-petit-appは未使用)
+    └── state/last_session.txt            # セッション再開用(他ツール用、m5-petit-appは未使用)
 ```
 
 ## スクリプト
