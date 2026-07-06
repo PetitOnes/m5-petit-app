@@ -1,7 +1,7 @@
 [project]
 name = "m5-petit-app"
-version = "0.3.0"
-description = "Dashboard server for M5 Petit — album, voice memo, notebook, mailbox, M5 watcher, multi-user auth (N users x N characters)"
+version = "0.4.0"
+description = "Dashboard server for M5 Petit — album, voice memo, notebook, mailbox, M5 watcher, multi-user auth (N users x N characters), per-character conversation locking, group chat"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
@@ -21,6 +21,13 @@ dev = [
     "pytest-asyncio>=0.24.0",
     "httpx>=0.27.0",
 ]
+
+[tool.pytest.ini_options]
+# Phase C's concurrency tests (character lock / group chat streaming) drive
+# main.py's async endpoints directly via httpx.AsyncClient + asyncio.gather,
+# so async test functions need pytest-asyncio without a @pytest.mark.asyncio
+# on every single one.
+asyncio_mode = "auto"
 
 [build-system]
 requires = ["hatchling"]

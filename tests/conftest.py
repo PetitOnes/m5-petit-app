@@ -14,9 +14,16 @@ from pathlib import Path
 
 import pytest
 
+# Fake `claude` CLI (see tests/fixtures/fake_claude.py) — every test that
+# imports main.py via `app_module` gets CLAUDE_CLI_PATH pointed at it, so
+# call_claude() never shells out to the real Claude CLI / spends an API call.
+# Tests that exercise call_claude() can further tune its behavior via the
+# FAKE_CLAUDE_DELAY / FAKE_CLAUDE_REPLY / FAKE_CLAUDE_LOG env vars.
+FAKE_CLAUDE = Path(__file__).resolve().parent / "fixtures" / "fake_claude.py"
+
 
 def make_character(base: Path, char_id: str, name: str | None = None, color: str | None = None,
-                    m5_hosts=None, with_config: bool = True) -> None:
+                    m5_hosts=None, with_config: bool = True, in_group: bool | None = None) -> None:
     cfg_dir = base / "characters" / char_id / "config"
     cfg_dir.mkdir(parents=True, exist_ok=True)
     if with_config:
@@ -27,6 +34,8 @@ def make_character(base: Path, char_id: str, name: str | None = None, color: str
             cfg["color"] = color
         if m5_hosts is not None:
             cfg["m5_hosts"] = m5_hosts
+        if in_group is not None:
+            cfg["in_group"] = in_group
         (cfg_dir / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
 
 
@@ -34,6 +43,7 @@ def make_character(base: Path, char_id: str, name: str | None = None, color: str
 def app_module(tmp_path, monkeypatch):
     """Import main.py fresh with PETIT_DATA_DIR pointed at a tmp_path."""
     monkeypatch.setenv("PETIT_DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("CLAUDE_CLI_PATH", str(FAKE_CLAUDE))
     monkeypatch.delenv("CHARACTER_ID", raising=False)
     monkeypatch.delenv("USER_ID", raising=False)
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
