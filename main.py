@@ -41,7 +41,7 @@ from zoneinfo import ZoneInfo
 
 import websockets
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response, StreamingResponse
 from PIL import Image, ImageOps
 from pydantic import BaseModel
 
@@ -78,6 +78,15 @@ TZ = ZoneInfo("Asia/Tokyo")
 SESSION_COOKIE_NAME = "petit_session"
 SESSION_MAX_AGE = 30 * 24 * 3600  # 30 days
 _ID_RE = re.compile(r"^[a-zA-Z0-9_]+$")
+
+# The claude CLI binary to invoke — overridable so tests can point it at a
+# fake script instead of shelling out to the real `claude` (see call_claude()).
+CLAUDE_CLI_PATH = os.environ.get("CLAUDE_CLI_PATH", "claude")
+
+# "1 character = 1 mind" (design principle #4): a character's Claude session
+# is serialized behind a per-character lock so it never carries on two
+# conversations at once. See _character_lock() below.
+CHAR_LOCK_TIMEOUT = 120.0  # seconds
 
 
 # ===================== Users & auth (Phase B) =====================
@@ -524,6 +533,60 @@ def _session_file(character_id: str, session_key: str) -> Path:
     return char_dir(character_id) / "state" / f".session-id.{session_key}"
 
 
+# ===================== Character lock (Phase C) =====================
+# One asyncio.Lock per character id. Every call_claude() invocation for a
+# given character — chat, group chat, M5 button reactions, diary generation —
+# acquires this lock first, so the character never runs two conversations at
+# once ("1 character = 1 mind"). Requests for *other* characters are
+# completely unaffected (separate lock per id).
+#
+# A waiter gives up waiting after CHAR_LOCK_TIMEOUT seconds and force-opens a
+# fresh lock rather than starving forever behind a wedged call — call_claude()
+# already bounds its own subprocess to 120s, so this is defense in depth for
+# anything that could hang before/after the subprocess (file I/O, a future
+# code path, etc).
+
+_char_locks: dict[str, asyncio.Lock] = {}
+_char_lock_holders: dict[str, dict] = {}  # character_id -> {"user_id", "name", "since"}
+
+
+def _get_char_lock(character_id: str) -> asyncio.Lock:
+    lock = _char_locks.get(character_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _char_locks[character_id] = lock
+    return lock
+
+
+def character_lock_status(character_id: str) -> dict | None:
+    """Current holder of a character's lock ({"user_id", "name", "since"}),
+    or None if nobody is talking to it right now."""
+    return _char_lock_holders.get(character_id)
+
+
+@asynccontextmanager
+async def _character_lock(character_id: str, holder_id: str, holder_name: str):
+    lock = _get_char_lock(character_id)
+    try:
+        await asyncio.wait_for(lock.acquire(), timeout=CHAR_LOCK_TIMEOUT)
+    except asyncio.TimeoutError:
+        # Force-release: swap in a brand new lock for this character and take
+        # it uncontended. The old holder (if it ever finishes) will release a
+        # lock object nobody else references anymore — harmless.
+        lock = asyncio.Lock()
+        _char_locks[character_id] = lock
+        await lock.acquire()
+    since = time.time()
+    _char_lock_holders[character_id] = {"user_id": holder_id, "name": holder_name, "since": since}
+    try:
+        yield
+    finally:
+        current = _char_lock_holders.get(character_id)
+        if current is not None and current.get("since") == since:
+            _char_lock_holders.pop(character_id, None)
+        lock.release()
+
+
 async def call_claude(character: dict, message: str, user: dict | None = None, source: str = "chat") -> str:
     """Call Claude CLI for the given character. Saves a stream log under the
     character's stream_logs/ dir for the 記録 tab.
@@ -559,7 +622,7 @@ async def call_claude(character: dict, message: str, user: dict | None = None, s
     sf = _session_file(char_id, session_key)
 
     def _build_cmd(resume: bool) -> list[str]:
-        cmd = ["claude", "--print", "--system-prompt", system_prompt, "--output-format", "stream-json", "--verbose"]
+        cmd = [CLAUDE_CLI_PATH, "--print", "--system-prompt", system_prompt, "--output-format", "stream-json", "--verbose"]
         if mcp_config.exists():
             cmd += ["--mcp-config", str(mcp_config)]
         if resume and sf.exists():
@@ -577,26 +640,32 @@ async def call_claude(character: dict, message: str, user: dict | None = None, s
         stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=120)
         return stdout.decode()
 
-    try:
-        raw = await _run(_build_cmd(resume=True))
-        reply, new_sid = _extract_reply_and_session(raw)
-        if not reply and sf.exists():
-            # The resumed session may have gone stale (pruned by the CLI,
-            # corrupted, etc.) — drop it and retry fresh once.
-            sf.unlink(missing_ok=True)
-            raw = await _run(_build_cmd(resume=False))
+    # "1 character = 1 mind": serialize every call for this character behind
+    # its lock, whether it's a logged-in human's chat, a group-chat turn, an
+    # M5 button reaction, or diary generation.
+    holder_id = user["id"] if user else f"_{source}"
+    holder_name = (user.get("name") or user["id"]) if user else f"[{source}]"
+    async with _character_lock(char_id, holder_id, holder_name):
+        try:
+            raw = await _run(_build_cmd(resume=True))
             reply, new_sid = _extract_reply_and_session(raw)
-        stream_dir = _stream_log_dir(char_id)
-        stream_dir.mkdir(parents=True, exist_ok=True)
-        stream_path = stream_dir / f"{datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}_{source}.jsonl"
-        stream_path.write_text(raw, encoding="utf-8")
-        if new_sid:
-            sf.parent.mkdir(parents=True, exist_ok=True)
-            sf.write_text(new_sid, encoding="utf-8")
-        return reply
-    except Exception as e:
-        print(f"[call_claude:{char_id}] error: {e}")
-        return ""
+            if not reply and sf.exists():
+                # The resumed session may have gone stale (pruned by the CLI,
+                # corrupted, etc.) — drop it and retry fresh once.
+                sf.unlink(missing_ok=True)
+                raw = await _run(_build_cmd(resume=False))
+                reply, new_sid = _extract_reply_and_session(raw)
+            stream_dir = _stream_log_dir(char_id)
+            stream_dir.mkdir(parents=True, exist_ok=True)
+            stream_path = stream_dir / f"{datetime.now(TZ).strftime('%Y%m%d_%H%M%S')}_{source}.jsonl"
+            stream_path.write_text(raw, encoding="utf-8")
+            if new_sid:
+                sf.parent.mkdir(parents=True, exist_ok=True)
+                sf.write_text(new_sid, encoding="utf-8")
+            return reply
+        except Exception as e:
+            print(f"[call_claude:{char_id}] error: {e}")
+            return ""
 
 
 async def _m5_camera_react(character: dict, host: str):
@@ -1225,6 +1294,110 @@ async def api_chat_history(character_id: str, user: dict = Depends(get_current_u
     return _load_chat_log(character_id, user["id"])[-100:]
 
 
+@app.get("/api/{character_id}/chat/status")
+async def api_chat_status(character_id: str, user: dict = Depends(get_current_user)):
+    """Polled by the UI while a chat request is in flight, so it can show
+    '<name>と話し中…' instead of a bare spinner when the character's lock is
+    held by someone else (Phase C: one character = one mind)."""
+    require_character(character_id, user)
+    holder = character_lock_status(character_id)
+    if holder and holder["user_id"] != user["id"]:
+        return {"busy": True, "partner_name": holder["name"]}
+    return {"busy": False, "partner_name": None}
+
+
+# ===================== Group chat API (会話：グループ, Phase C) =====================
+# Every character the logged-in user can see, that opts in via config.json's
+# `in_group` flag (default true), gets the message in turn — each one
+# streamed back to the client (NDJSON) as soon as it replies, per the design
+# doc's "sequential streaming" decision. Each turn is told this is a group
+# conversation and gets the previous character's reply as context, so the
+# conversation reads as one continuous exchange rather than N independent
+# one-off replies.
+#
+# The log is per logged-in user (design decision ⑤): user A's group chat is
+# not visible to user B, even though they may share every character.
+
+def _group_log_file(user_id: str) -> Path:
+    return DATA_DIR / "users" / user_id / "group_chat.json"
+
+
+def _load_group_log(user_id: str) -> list[dict]:
+    f = _group_log_file(user_id)
+    if not f.exists():
+        return []
+    try:
+        return json.loads(f.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+
+
+def _append_group_log(user_id: str, entry: dict) -> None:
+    f = _group_log_file(user_id)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    log = _load_group_log(user_id)
+    log.append(entry)
+    f.write_text(json.dumps(log[-200:], ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _group_characters(user: dict) -> list[dict]:
+    return [c for c in list_characters(user) if c.get("in_group", True)]
+
+
+class GroupChatRequest(BaseModel):
+    message: str
+
+
+async def _group_chat_stream(chars: list[dict], message: str, user: dict):
+    """Ask each character in turn, yielding one NDJSON line as soon as it
+    replies (returned-first order, not necessarily list order — though here
+    it's sequential so they're the same)."""
+    now = datetime.now(TZ).isoformat()
+    user_name = user.get("name") or user["id"]
+    user_color = user.get("color") or DEFAULT_USER_COLOR
+    _append_group_log(user["id"], {"role": "user", "name": user_name, "color": user_color, "text": message, "timestamp": now})
+    responses: list[dict] = []
+    for char in chars:
+        if responses:
+            prev = responses[-1]
+            context = (
+                f"{message}\n\n"
+                f"[これはグループ会話です。他の子の返答もこの後に続きます。"
+                f"さっき{prev['name']}がこう言っていました]\n{prev['reply']}"
+            )
+        else:
+            context = f"{message}\n\n[これはグループ会話です。他の子の返答もこの後に続きます。]"
+        reply = await call_claude(char, context, user=user, source="group")
+        _append_chat(char["id"], user["id"], user["id"], message)
+        _append_chat(char["id"], user["id"], char["id"], reply)
+        r = {
+            "character_id": char["id"],
+            "name": char.get("name") or char["id"],
+            "color": char.get("color") or DEFAULT_CHARACTER_COLOR,
+            "reply": reply,
+        }
+        responses.append(r)
+        _append_group_log(user["id"], {
+            "role": char["id"], "name": r["name"], "color": r["color"],
+            "text": reply, "timestamp": datetime.now(TZ).isoformat(),
+        })
+        yield json.dumps(r, ensure_ascii=False) + "\n"
+
+
+@app.post("/api/group/chat/stream")
+async def api_group_chat_stream(req: GroupChatRequest, user: dict = Depends(get_current_user)):
+    chars = _group_characters(user)
+    return StreamingResponse(
+        _group_chat_stream(chars, req.message, user),
+        media_type="application/x-ndjson",
+    )
+
+
+@app.get("/api/group/history")
+async def api_group_history(user: dict = Depends(get_current_user)):
+    return _load_group_log(user["id"])[-200:]
+
+
 # ===================== Records API (記録) =====================
 # Each call_claude() invocation writes a raw `claude --output-format stream-json`
 # transcript under the character's stream_logs/ dir; these endpoints expose
@@ -1407,6 +1580,7 @@ hr { border: none; border-top: 1px solid #eee; margin: 10px 0; }
   <button class="tab" onclick="showTab('notebook')">📔 ノート</button>
   <button class="tab" onclick="showTab('mail')">✉️ メール</button>
   <button class="tab" onclick="showTab('chat')">💬 会話</button>
+  <button class="tab" id="tab-btn-group" style="display:none" onclick="showTab('group')">👨‍👩‍👧‍👦 グループ会話</button>
   <button class="tab" onclick="showTab('records')">📜 記録</button>
   <button class="tab" onclick="showTab('diary')">📖 日記</button>
 </div>
@@ -1483,9 +1657,23 @@ hr { border: none; border-top: 1px solid #eee; margin: 10px 0; }
 <div id="tab-chat" class="panel">
   <div class="card">
     <div id="chat-list" style="max-height:400px;overflow-y:auto"></div>
+    <div id="chat-status" class="meta" style="margin-top:4px"></div>
     <div class="row" style="margin-top:8px;align-items:flex-start">
       <textarea id="chat-input" placeholder="メッセージを入力..." style="flex:1"></textarea>
-      <button onclick="sendChat()">送信</button>
+      <button id="chat-send-btn" onclick="sendChat()">送信</button>
+    </div>
+  </div>
+</div>
+
+<!-- Group chat (Phase C: every visible in_group character, replies streamed
+     back one at a time as they arrive) -->
+<div id="tab-group" class="panel">
+  <div class="card">
+    <p class="meta" style="margin-bottom:8px">見えているみんなに一度に話しかけます。返事は届いた子から順に表示されます。</p>
+    <div id="group-chat-list" style="max-height:400px;overflow-y:auto"></div>
+    <div class="row" style="margin-top:8px;align-items:flex-start">
+      <textarea id="group-chat-input" placeholder="メッセージを入力..." style="flex:1"></textarea>
+      <button id="group-send-btn" onclick="sendGroupChat()">送信</button>
     </div>
   </div>
 </div>
@@ -1550,6 +1738,10 @@ async function loadCharacters() {
   currentCharacterId = CHARACTERS[0].id;
   renderCharTabs();
   onCharacterChanged();
+  // Group chat tab only makes sense with 2+ characters this user can see
+  // that opted into it (config.json's in_group, default true).
+  const groupChars = CHARACTERS.filter(c => c.in_group !== false);
+  document.getElementById('tab-btn-group').style.display = groupChars.length >= 2 ? '' : 'none';
 }
 
 function renderCharTabs() {
@@ -1593,6 +1785,7 @@ function refreshActiveTab(name) {
   if (name === 'album') loadAlbum();
   if (name === 'voice') loadVoiceMemos();
   if (name === 'chat') loadChat();
+  if (name === 'group') loadGroupChat();
   if (name === 'records') loadRecordsList();
   if (name === 'diary') loadDiary();
 }
@@ -1788,15 +1981,98 @@ async function loadChat() {
 
 async function sendChat() {
   const input = document.getElementById('chat-input');
+  const btn = document.getElementById('chat-send-btn');
+  const statusEl = document.getElementById('chat-status');
   const message = input.value.trim();
   if (!message) return;
   input.value = '';
-  await fetch(`/api/${currentCharacterId}/chat`, {
-    method: 'POST',
-    headers: {'Content-Type': 'application/json'},
-    body: JSON.stringify({message})
-  });
-  loadChat();
+  btn.disabled = true;
+  const charId = currentCharacterId;
+  // While the request is in flight, poll the lock status so we can show
+  // "<name>と話し中…" if this character is currently serving someone else
+  // (Phase C: one character = one mind, requests to the same character are
+  // queued behind an asyncio lock).
+  const statusTimer = setInterval(async () => {
+    try {
+      const s = await fetch(`/api/${charId}/chat/status`).then(r => r.json());
+      statusEl.textContent = s.busy ? `${s.partner_name}と話し中…` : '考え中…';
+    } catch (e) { /* ignore transient poll errors */ }
+  }, 800);
+  statusEl.textContent = '考え中…';
+  try {
+    await fetch(`/api/${charId}/chat`, {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message})
+    });
+  } finally {
+    clearInterval(statusTimer);
+    statusEl.textContent = '';
+    btn.disabled = false;
+  }
+  if (charId === currentCharacterId) loadChat();
+}
+
+// Group chat (Phase C)
+async function loadGroupChat() {
+  const log = await fetch('/api/group/history').then(r => r.json());
+  const el = document.getElementById('group-chat-list');
+  el.innerHTML = log.map(e => `
+    <div class="card">
+      <div class="row"><strong style="color:${e.color || '#333'}">${e.name}</strong><span class="meta" style="margin-left:8px">${new Date(e.timestamp).toLocaleString('ja-JP')}</span></div>
+      <div style="margin-top:4px;white-space:pre-wrap;font-size:13px">${e.text}</div>
+    </div>`).join('') || '<p style="color:#999;padding:8px">まだグループ会話なし</p>';
+  el.scrollTop = el.scrollHeight;
+}
+
+async function sendGroupChat() {
+  const input = document.getElementById('group-chat-input');
+  const btn = document.getElementById('group-send-btn');
+  const message = input.value.trim();
+  if (!message) return;
+  input.value = '';
+  btn.disabled = true;
+  const el = document.getElementById('group-chat-list');
+  el.insertAdjacentHTML('beforeend', `<div class="card"><strong>${ME ? ME.name : ''}</strong><div style="margin-top:4px;white-space:pre-wrap;font-size:13px">${message}</div></div>`);
+  const thinking = document.createElement('div');
+  thinking.className = 'card meta';
+  thinking.textContent = 'みんなに聞いてる…';
+  el.appendChild(thinking);
+  el.scrollTop = el.scrollHeight;
+  try {
+    const res = await fetch('/api/group/chat/stream', {
+      method: 'POST',
+      headers: {'Content-Type': 'application/json'},
+      body: JSON.stringify({message})
+    });
+    if (!res.ok || !res.body) throw new Error('stream failed');
+    const reader = res.body.getReader();
+    const decoder = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const {done, value} = await reader.read();
+      if (done) break;
+      buf += decoder.decode(value, {stream: true});
+      let idx;
+      while ((idx = buf.indexOf('\\n')) >= 0) {
+        const line = buf.slice(0, idx).trim();
+        buf = buf.slice(idx + 1);
+        if (!line) continue;
+        const r = JSON.parse(line);
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `<strong style="color:${r.color}">${r.name}</strong><div style="margin-top:4px;white-space:pre-wrap;font-size:13px">${r.reply}</div>`;
+        el.insertBefore(card, thinking);
+        el.scrollTop = el.scrollHeight;
+      }
+    }
+  } catch (e) {
+    thinking.textContent = 'エラーが発生しました';
+    return;
+  } finally {
+    btn.disabled = false;
+  }
+  thinking.remove();
 }
 
 // Records
