@@ -1,7 +1,7 @@
 [project]
 name = "m5-petit-app"
-version = "0.2.0"
-description = "Dashboard server for M5 Petit — album, voice memo, notebook, mailbox, M5 watcher (N characters, Phase A)"
+version = "0.3.0"
+description = "Dashboard server for M5 Petit — album, voice memo, notebook, mailbox, M5 watcher, multi-user auth (N users x N characters)"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
