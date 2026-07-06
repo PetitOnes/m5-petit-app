@@ -2,7 +2,7 @@
 
 ## [日本語ページ](./README.md)
 
-A dashboard server for M5 Petit. Supports **N human users × N characters** (v0.3+): drop a new directory under `PETIT_DATA_DIR/characters/` and a character shows up (no restart needed — only the M5 device watcher is fixed at startup), and add an account to `users.json` and a family member gets their own login. A setup like Airi's household (2 humans × 3 characters) is the general shape this is built for.
+A dashboard server for M5 Petit. Supports **N human users × N characters** (v0.3+): drop a new directory under `PETIT_DATA_DIR/characters/` and a character shows up (no restart needed — only the M5 device watcher is fixed at startup), and add an account to `users.json` and a family member gets their own login. A setup like Airi's household (2 humans × 3 characters) is the general shape this is built for. v0.4 adds per-character conversation locking and group chat.
 
 Use the web UI in your browser to manage a photo album, voice memos, a notebook, a mailbox, chat, records, and a diary. When more than one character is configured, a character tab strip appears at the top of the page (hidden when there's only one character — and only characters the logged-in user is allowed to see show up at all).
 
@@ -14,7 +14,8 @@ Use the web UI in your browser to manage a photo album, voice memos, a notebook,
 - 🎙️ **Voice memo** — upload/list audio files, playback management
 - 📔 **Notebook** — read and write text notes
 - ✉️ **Mailbox** — send/receive messages, mark read
-- 💬 **Chat** — talk to Claude (the character) directly from the web UI. Automatic responses triggered by the M5's mic/camera/sensors are logged here too
+- 💬 **Chat** — talk to Claude (the character) directly from the web UI. Automatic responses triggered by the M5's mic/camera/sensors are logged here too. Conversations with the same character are serialized behind a per-character lock ("one character = one mind") — while it's talking to someone else you'll see "talking with <name>…" (see "Conversation locking" below)
+- 👨‍👩‍👧‍👦 **Group chat** (v0.4+) — message every character you can see that has `in_group: true` (the default) at once. Replies stream back one at a time as each character finishes, and each character gets the previous one's reply as context. The log is per logged-in user, never shared across the family
 - 📜 **Records** — browse the raw transcript of each Claude CLI call (what it said, thought, and which tools it used)
 - 📖 **Diary** — generate and view a diary written from the character's perspective, based on that day's chat log (with a manual "write" button)
 
@@ -73,7 +74,14 @@ Create `PETIT_DATA_DIR/characters/<character_id>/config/config.json` and the cha
 | `name` | Display name (used in the tab strip and header) | same as `id` |
 | `color` | Character tab color (CSS color) | `#4a7c59` |
 | `m5_hosts` | M5 device hostname/IP (comma-separated string or array) | none |
-| `in_group` | Reserved field (Phase C: group-chat participation flag) | `true` |
+| `in_group` | Whether this character takes part in group chat (v0.4+) | `true` |
+
+## Conversation locking (one character = one mind)
+
+Every call to a character (1:1 chat, group chat, M5 button auto-responses, diary generation — all of them) is serialized behind a lock keyed on the character id, so one character never carries on two conversations at once. Requests to a *different* character run fully in parallel.
+
+- If someone else's request comes in while a character is busy, it queues behind the lock. The web UI polls `GET /api/<character_id>/chat/status` and shows "talking with <name>…" (your own other requests don't count as "busy" for this purpose).
+- If a lock isn't released within 120 seconds (`CHAR_LOCK_TIMEOUT`), it's force-opened so a waiter doesn't starve — the claude CLI call itself already times out at the same 120s, so this is mostly a second line of defense.
 
 ## How auth works
 
@@ -90,6 +98,7 @@ Create `PETIT_DATA_DIR/characters/<character_id>/config/config.json` and the cha
 | `PETIT_DATA_DIR` | Data directory | `~/petit_data` |
 | `PROJECT_DIR` | Project root for the Claude CLI and scripts | this file's parent directory |
 | `PORT` | Port to listen on | `8765` |
+| `CLAUDE_CLI_PATH` | Path to the claude CLI executable (overridable for tests) | `claude` |
 
 The `USER_ID` env var has been removed (not compatible with v0.2.x) — the human side is now `users.json` accounts. The `CHARACTER_ID` / `CHARACTER_NAME` / `M5_HOST` / `M5_HOSTS` env vars were removed earlier (not compatible with v0.1.x either). Move per-character settings into `config.json` as above. Use the migration script below to move data from an old layout.
 
@@ -102,6 +111,7 @@ petit_data/
 ├── resources/petit.png                   # character image, etc. (used by other tools, optional)
 ├── mailbox/                              # mailbox (from_X_to_Y naming, already N×N)
 ├── notebook/notebook.json                # notebook (shared across the family, not character-scoped)
+├── users/<user_id>/group_chat.json       # ★ group chat log (v0.4+: per user, never shared across users)
 └── characters/<character_id>/
     ├── SOUL.md                           # character personality definition (optional; falls back to default text)
     ├── album/<person_id>/                # album (v0.2+: moved under the character)
