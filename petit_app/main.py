@@ -18,6 +18,7 @@ Environment variables:
   PETIT_DATA_DIR  Data directory (default: ~/petit_data)
   PROJECT_DIR     Project root for Claude CLI and scripts (default: this file's parent)
   PORT            Port to listen on (default: 8765)
+  PETIT_APP_EXTENSIONS_DIR  Folder of extensions (default: $PETIT_DATA_DIR/app_extensions)
 
 Runs on port 8765 by default. Override with PORT env var or uvicorn args.
 """
@@ -36,6 +37,7 @@ from . import (
     characters,
     chat,
     diary,
+    extensions,
     group_chat,
     mailbox,
     notebook,
@@ -78,7 +80,12 @@ app.include_router(chat.router)
 app.include_router(group_chat.router)
 app.include_router(records.router)
 app.include_router(diary.router)
+app.include_router(extensions.router)
 app.include_router(ui_legacy.router)
+
+# House-specific extensions come last, after every base route is in place, so
+# an extension can never shadow one (see extensions.py).
+extensions.load_extensions(app)
 
 
 # ===================== Entry point =====================
