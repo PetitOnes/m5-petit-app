@@ -39,19 +39,46 @@ def make_character(base: Path, char_id: str, name: str | None = None, color: str
         (cfg_dir / "config.json").write_text(json.dumps(cfg), encoding="utf-8")
 
 
+def _drop_app_modules() -> None:
+    """Forget main.py and every petit_app.* module so the next import re-reads
+    PETIT_DATA_DIR (config.py computes its paths at import time)."""
+    for name in [n for n in sys.modules if n == "main" or n == "petit_app" or n.startswith("petit_app.")]:
+        sys.modules.pop(name, None)
+
+
+class _AppModules:
+    """What tests used to get as the single `main` module: attribute reads fall
+    through to the petit_app modules (config, auth, characters, ...), and the
+    modules themselves are reachable as attributes (app_module.config) for
+    monkeypatch targets."""
+
+    def __init__(self, main_module):
+        self._main = main_module
+        self.app = main_module.app
+
+    def __getattr__(self, name):
+        for mod_name in ("config", "auth", "characters", "locks", "album", "voice_memo", "notebook",
+                         "mailbox", "chat", "group_chat", "records", "diary", "m5_watcher", "ui_legacy"):
+            mod = importlib.import_module(f"petit_app.{mod_name}")
+            if name == mod_name:
+                return mod
+            if hasattr(mod, name):
+                return getattr(mod, name)
+        raise AttributeError(name)
+
+
 @pytest.fixture
 def app_module(tmp_path, monkeypatch):
-    """Import main.py fresh with PETIT_DATA_DIR pointed at a tmp_path."""
+    """Import the app fresh (main.py + petit_app) with PETIT_DATA_DIR pointed at a tmp_path."""
     monkeypatch.setenv("PETIT_DATA_DIR", str(tmp_path))
     monkeypatch.setenv("CLAUDE_CLI_PATH", str(FAKE_CLAUDE))
     monkeypatch.delenv("CHARACTER_ID", raising=False)
     monkeypatch.delenv("USER_ID", raising=False)
     sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-    sys.modules.pop("main", None)
+    _drop_app_modules()
     import main
-    importlib.reload(main)
-    yield main
-    sys.modules.pop("main", None)
+    yield _AppModules(main)
+    _drop_app_modules()
 
 
 @pytest.fixture

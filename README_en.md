@@ -19,6 +19,12 @@ Use the web UI in your browser to manage a photo album, voice memos, a notebook,
 - 📜 **Records** — browse the raw transcript of each Claude CLI call (what it said, thought, and which tools it used)
 - 📖 **Diary** — generate and view a diary written from the character's perspective, based on that day's chat log (with a manual "write" button)
 
+## Layout
+
+- `petit_app/` — the API (FastAPI), one file per feature (`album.py`, `chat.py`, …). `petit_app/main.py` assembles and starts it
+- `main.py` — a thin entry point so that `python main.py` / `uvicorn main:app` keep working
+- `tests/` — pytest
+
 ## Setup
 
 Install uv first if you don't already have it:

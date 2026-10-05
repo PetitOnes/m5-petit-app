@@ -138,7 +138,7 @@ async def test_chat_status_reports_busy_partner_while_locked(app_module, tmp_pat
 
 
 async def test_lock_force_released_after_timeout(app_module, monkeypatch):
-    monkeypatch.setattr(app_module, "CHAR_LOCK_TIMEOUT", 0.05)
+    monkeypatch.setattr(app_module.config, "CHAR_LOCK_TIMEOUT", 0.05)
     stuck_lock = app_module._get_char_lock("alpha")
     await stuck_lock.acquire()  # simulate a wedged holder that never releases
 
