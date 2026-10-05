@@ -149,6 +149,47 @@ def verify_session_token(token: str) -> str | None:
         return None
 
 
+def get_internal_token() -> str:
+    """The shared secret local tools send in `X-Petit-Internal-Token`.
+    Created (0600) the first time it is needed."""
+    f = config.INTERNAL_TOKEN_FILE
+    if f.exists():
+        try:
+            token = f.read_text(encoding="utf-8").strip()
+            if token:
+                return token
+        except OSError:
+            pass
+    token = secrets.token_hex(32)
+    f.parent.mkdir(parents=True, exist_ok=True)
+    f.write_text(token, encoding="utf-8")
+    try:
+        f.chmod(0o600)
+    except OSError:
+        pass
+    return token
+
+
+# The internal token only opens the house-wide media routes — nothing else.
+_INTERNAL_PREFIXES = ("/api/album/", "/api/voice_memo/")
+INTERNAL_CALLER = {"id": "_internal", "name": "internal", "internal": True}
+
+
+def is_internal_request(request: Request) -> bool:
+    sent = request.headers.get(config.INTERNAL_TOKEN_HEADER, "")
+    if not sent or not request.url.path.startswith(_INTERNAL_PREFIXES):
+        return False
+    return hmac.compare_digest(sent, get_internal_token())
+
+
+def get_caller(request: Request) -> dict:
+    """FastAPI dependency for the house-wide media routes: a local tool holding
+    the internal token, or the authenticated user. 401 otherwise."""
+    if is_internal_request(request):
+        return INTERNAL_CALLER
+    return get_current_user(request)
+
+
 def get_current_user(request: Request) -> dict:
     """FastAPI dependency: the authenticated user, or 401."""
     token = request.cookies.get(config.SESSION_COOKIE_NAME)
@@ -205,6 +246,9 @@ async def auth_gate(request: Request, call_next):
             if is_api:
                 return JSONResponse({"error": "already set up"}, status_code=409)
             return RedirectResponse("/login")
+        return await call_next(request)
+
+    if is_internal_request(request):
         return await call_next(request)
 
     token = request.cookies.get(config.SESSION_COOKIE_NAME)

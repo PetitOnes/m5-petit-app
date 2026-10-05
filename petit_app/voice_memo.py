@@ -16,8 +16,11 @@ from .characters import char_dir, require_character
 
 # ===================== Voice memo helpers =====================
 
-def _voice_memo_dir(character_id: str, person_id: str) -> Path:
-    d = char_dir(character_id) / "voice_memo" / person_id
+def _voice_memo_dir(character_id: str | None, person_id: str) -> Path:
+    if character_id is None:
+        d = config.SHARED_VOICE_MEMO_DIR / person_id
+    else:
+        d = char_dir(character_id) / "voice_memo" / person_id
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -75,12 +78,19 @@ def _prune_voice_memo(character_id: str, person_id: str):
         memos.remove(target)
 
 
+def _check_scope(character_id: str | None, user: dict) -> None:
+    """Per-character routes: the character must be visible to the user.
+    House-wide routes (character_id None) are checked in shared_media.py."""
+    if character_id is not None:
+        require_character(character_id, user)
+
+
 router = APIRouter()
 
 
 @router.get("/api/{character_id}/voice_memo/{person_id}")
 async def api_voice_memo_list(character_id: str, person_id: str, unlistened_by: str = "", user: dict = Depends(get_current_user)):
-    require_character(character_id, user)
+    _check_scope(character_id, user)
     d = _voice_memo_dir(character_id, person_id)
     listens = _load_listens(character_id, person_id)
     locks = _load_voice_locks(character_id, person_id)
@@ -104,7 +114,7 @@ async def api_voice_memo_list(character_id: str, person_id: str, unlistened_by: 
 
 @router.get("/api/{character_id}/voice_memo/{person_id}/{filename}")
 async def api_voice_memo_file(character_id: str, person_id: str, filename: str, user: dict = Depends(get_current_user)):
-    require_character(character_id, user)
+    _check_scope(character_id, user)
     path = _voice_memo_dir(character_id, person_id) / filename
     if not path.exists() or path.suffix not in config._AUDIO_EXTS:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -115,7 +125,7 @@ async def api_voice_memo_file(character_id: str, person_id: str, filename: str, 
 
 @router.post("/api/{character_id}/voice_memo/{person_id}/upload")
 async def api_voice_memo_upload(character_id: str, person_id: str, file: UploadFile = File(...), title: str = Form("memo"), user: dict = Depends(get_current_user)):
-    require_character(character_id, user)
+    _check_scope(character_id, user)
     data = await file.read()
     if len(data) > config.VOICE_MEMO_MAX_BYTES:
         return JSONResponse({"error": "file too large"}, status_code=400)
@@ -129,7 +139,7 @@ async def api_voice_memo_upload(character_id: str, person_id: str, file: UploadF
 
 @router.post("/api/{character_id}/voice_memo/{person_id}/{filename}/listen")
 async def api_voice_memo_mark_listen(character_id: str, person_id: str, filename: str, listener: str, user: dict = Depends(get_current_user)):
-    require_character(character_id, user)
+    _check_scope(character_id, user)
     listens = _load_listens(character_id, person_id)
     listeners = listens.get(filename, [])
     if listener not in listeners:
@@ -141,7 +151,7 @@ async def api_voice_memo_mark_listen(character_id: str, person_id: str, filename
 
 @router.post("/api/{character_id}/voice_memo/{person_id}/{filename}/lock")
 async def api_voice_memo_toggle_lock(character_id: str, person_id: str, filename: str, user: dict = Depends(get_current_user)):
-    require_character(character_id, user)
+    _check_scope(character_id, user)
     path = _voice_memo_dir(character_id, person_id) / filename
     if not path.exists() or path.suffix not in config._AUDIO_EXTS:
         return JSONResponse({"error": "not found"}, status_code=404)
@@ -158,7 +168,7 @@ async def api_voice_memo_toggle_lock(character_id: str, person_id: str, filename
 
 @router.delete("/api/{character_id}/voice_memo/{person_id}/{filename}")
 async def api_voice_memo_delete(character_id: str, person_id: str, filename: str, user: dict = Depends(get_current_user)):
-    require_character(character_id, user)
+    _check_scope(character_id, user)
     path = _voice_memo_dir(character_id, person_id) / filename
     if not path.exists() or path.suffix not in config._AUDIO_EXTS:
         return JSONResponse({"error": "not found"}, status_code=404)

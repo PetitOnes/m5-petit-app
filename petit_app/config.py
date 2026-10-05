@@ -20,6 +20,14 @@ NOTEBOOK_FILE = DATA_DIR / "notebook" / "notebook.json"
 MAILBOX_METADATA_FILE = DATA_DIR / "mailbox" / ".metadata.json"
 USERS_FILE = DATA_DIR / "users.json"
 SESSION_SECRET_FILE = DATA_DIR / ".session_secret"
+# House-wide album / voice memo store, one folder per person (a character or a
+# user). This is what the body MCP server (m5-petit-mcp) reads and writes.
+SHARED_ALBUM_DIR = Path(os.environ.get("PETIT_ALBUM_DIR", DATA_DIR / "photo_album"))
+SHARED_VOICE_MEMO_DIR = Path(os.environ.get("PETIT_VOICE_MEMO_DIR", DATA_DIR / "voice_memo"))
+# Shared secret for local tools (the MCP server) that call the dashboard
+# without a login session. Created on first start, readable only by the owner.
+INTERNAL_TOKEN_FILE = DATA_DIR / ".internal_token"
+INTERNAL_TOKEN_HEADER = "X-Petit-Internal-Token"
 
 DEFAULT_CHARACTER_COLOR = "#4a7c59"
 DEFAULT_USER_COLOR = "#7da8f5"

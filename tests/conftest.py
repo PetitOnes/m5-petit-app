@@ -58,7 +58,8 @@ class _AppModules:
 
     def __getattr__(self, name):
         for mod_name in ("config", "auth", "characters", "locks", "album", "voice_memo", "notebook",
-                         "mailbox", "chat", "group_chat", "records", "diary", "m5_watcher", "ui_legacy"):
+                         "mailbox", "chat", "group_chat", "records", "diary", "m5_watcher", "ui_legacy",
+                         "shared_media", "extensions"):
             mod = importlib.import_module(f"petit_app.{mod_name}")
             if name == mod_name:
                 return mod

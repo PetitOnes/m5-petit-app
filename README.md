@@ -107,6 +107,8 @@ python3 scripts/add_user.py bob "ボブ" --characters petit_a,petit_b --color "#
 | `PORT` | 待受ポート | `8765` |
 | `CLAUDE_CLI_PATH` | 呼び出すclaude CLIの実行ファイルパス(テスト用に差し替え可能) | `claude` |
 | `PETIT_APP_EXTENSIONS_DIR` | 追加(extension)を置くフォルダ | `$PETIT_DATA_DIR/app_extensions` |
+| `PETIT_ALBUM_DIR` | 家全体のアルバムの置き場(人ごとのフォルダ) | `$PETIT_DATA_DIR/photo_album` |
+| `PETIT_VOICE_MEMO_DIR` | 家全体のボイスメモの置き場(人ごとのフォルダ) | `$PETIT_DATA_DIR/voice_memo` |
 
 `USER_ID` 環境変数は廃止されました(v0.2系互換なし)。人間側のIDは `users.json` のアカウントに置き換わりました。`CHARACTER_ID` / `CHARACTER_NAME` / `M5_HOST` / `M5_HOSTS` 環境変数も廃止済みです(v0.1系互換なし)。キャラクターごとの設定は `config.json` に移してください。旧配置からの移行は下記の移行スクリプトを使ってください。
 
@@ -136,6 +138,19 @@ petit_data/
     ├── notes/XXXXX.md                     # キャラクター自身のメモ(他ツール用、m5-petit-appは未使用)
     └── state/last_session.txt             # (他ツール用、m5-petit-appは未使用)
 ```
+
+## 身体のMCP(m5-petit-mcp)とのつながり
+
+[m5-petit-mcp](https://github.com/PetitOnes/m5-petit-mcp) は、アルバムとボイスメモを次の口で読み書きします。「人」はキャラクターかユーザーのidで、人ごとのフォルダに入ります。
+
+```
+/api/album/snapshot            /api/album/{person_id}
+/api/album/{person_id}/{filename}    …/read  …/lock
+/api/voice_memo/{person_id}/upload   /api/voice_memo/{person_id}
+/api/voice_memo/{person_id}/{filename}  …/listen  …/lock
+```
+
+MCP はログインしていないので、**合言葉のファイル**で通します。ダッシュボードは起動時に `$PETIT_DATA_DIR/.internal_token`(本人だけ読める)を作り、MCP は同じ `PETIT_DATA_DIR` からそれを読んで `X-Petit-Internal-Token` ヘッダーで送ります。設定は要りません(両方の `PETIT_DATA_DIR` が同じであること)。この合言葉で開くのは上の口だけです。
 
 ## 追加(extension)
 
