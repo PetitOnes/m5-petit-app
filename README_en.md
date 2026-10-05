@@ -106,6 +106,8 @@ Every call to a character (1:1 chat, group chat, M5 button auto-responses, diary
 | `PORT` | Port to listen on | `8765` |
 | `CLAUDE_CLI_PATH` | Path to the claude CLI executable (overridable for tests) | `claude` |
 | `PETIT_APP_EXTENSIONS_DIR` | Folder for extensions | `$PETIT_DATA_DIR/app_extensions` |
+| `PETIT_ALBUM_DIR` | House-wide album store (one folder per person) | `$PETIT_DATA_DIR/photo_album` |
+| `PETIT_VOICE_MEMO_DIR` | House-wide voice memo store (one folder per person) | `$PETIT_DATA_DIR/voice_memo` |
 
 The `USER_ID` env var has been removed (not compatible with v0.2.x) — the human side is now `users.json` accounts. The `CHARACTER_ID` / `CHARACTER_NAME` / `M5_HOST` / `M5_HOSTS` env vars were removed earlier (not compatible with v0.1.x either). Move per-character settings into `config.json` as above. Use the migration script below to move data from an old layout.
 
@@ -135,6 +137,19 @@ petit_data/
     ├── notes/XXXXX.md                    # the character's own notes (used by other tools, not read by m5-petit-app)
     └── state/last_session.txt            # (used by other tools, not read by m5-petit-app)
 ```
+
+## Working with the body MCP server (m5-petit-mcp)
+
+[m5-petit-mcp](https://github.com/PetitOnes/m5-petit-mcp) reads and writes albums and voice memos through the routes below. A "person" is a character id or a user id; each person has their own folder.
+
+```
+/api/album/snapshot            /api/album/{person_id}
+/api/album/{person_id}/{filename}    …/read  …/lock
+/api/voice_memo/{person_id}/upload   /api/voice_memo/{person_id}
+/api/voice_memo/{person_id}/{filename}  …/listen  …/lock
+```
+
+The MCP server has no login session, so it uses a **token file**. On startup the dashboard creates `$PETIT_DATA_DIR/.internal_token` (owner-readable only); the MCP server reads it from the same `PETIT_DATA_DIR` and sends it in the `X-Petit-Internal-Token` header. No configuration is needed, as long as both use the same `PETIT_DATA_DIR`. The token opens only the routes above.
 
 ## Extensions
 

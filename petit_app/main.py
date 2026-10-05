@@ -42,6 +42,7 @@ from . import (
     mailbox,
     notebook,
     records,
+    shared_media,
     ui_legacy,
     voice_memo,
 )
@@ -68,10 +69,16 @@ app = FastAPI(lifespan=lifespan)
 
 app.middleware("http")(auth_gate)
 
+# Make sure the internal token file exists, so local tools (m5-petit-mcp) can read it.
+auth.get_internal_token()
+
 # Registration order = the top-to-bottom order the routes had in the single
 # main.py, so path matching is unchanged.
 app.include_router(auth.router)
 app.include_router(characters.router)
+# House-wide media routes go before the per-character ones: "/api/album/..."
+# must not be read as a character named "album".
+app.include_router(shared_media.router)
 app.include_router(album.router)
 app.include_router(voice_memo.router)
 app.include_router(notebook.router)
