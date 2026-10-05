@@ -106,6 +106,7 @@ python3 scripts/add_user.py bob "ボブ" --characters petit_a,petit_b --color "#
 | `PROJECT_DIR` | Claude CLI・スクリプトのプロジェクトルート | このファイルの親ディレクトリ |
 | `PORT` | 待受ポート | `8765` |
 | `CLAUDE_CLI_PATH` | 呼び出すclaude CLIの実行ファイルパス(テスト用に差し替え可能) | `claude` |
+| `PETIT_APP_EXTENSIONS_DIR` | 追加(extension)を置くフォルダ | `$PETIT_DATA_DIR/app_extensions` |
 
 `USER_ID` 環境変数は廃止されました(v0.2系互換なし)。人間側のIDは `users.json` のアカウントに置き換わりました。`CHARACTER_ID` / `CHARACTER_NAME` / `M5_HOST` / `M5_HOSTS` 環境変数も廃止済みです(v0.1系互換なし)。キャラクターごとの設定は `config.json` に移してください。旧配置からの移行は下記の移行スクリプトを使ってください。
 
@@ -135,6 +136,17 @@ petit_data/
     ├── notes/XXXXX.md                     # キャラクター自身のメモ(他ツール用、m5-petit-appは未使用)
     └── state/last_session.txt             # (他ツール用、m5-petit-appは未使用)
 ```
+
+## 追加(extension)
+
+その家だけの機能は、土台を書き換えずに「追加」として足せます。
+`$PETIT_DATA_DIR/app_extensions/` に `*.py` を置くと、起動時に読み込まれます。
+
+各ファイルは `register(app, ctx)` を持ちます。見本は `examples/extensions/hello.py`。
+
+- 追加が失敗しても、ダッシュボード本体は起動します(`GET /api/extensions` で確認できます)
+- 追加は土台の口を上書きできません
+- 追加は、このダッシュボードと同じ権限で動く Python のコードです。**信頼できるものだけ置いてください**
 
 ## 旧バージョンからの移行
 

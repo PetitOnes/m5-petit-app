@@ -105,6 +105,7 @@ Every call to a character (1:1 chat, group chat, M5 button auto-responses, diary
 | `PROJECT_DIR` | Project root for the Claude CLI and scripts | this file's parent directory |
 | `PORT` | Port to listen on | `8765` |
 | `CLAUDE_CLI_PATH` | Path to the claude CLI executable (overridable for tests) | `claude` |
+| `PETIT_APP_EXTENSIONS_DIR` | Folder for extensions | `$PETIT_DATA_DIR/app_extensions` |
 
 The `USER_ID` env var has been removed (not compatible with v0.2.x) — the human side is now `users.json` accounts. The `CHARACTER_ID` / `CHARACTER_NAME` / `M5_HOST` / `M5_HOSTS` env vars were removed earlier (not compatible with v0.1.x either). Move per-character settings into `config.json` as above. Use the migration script below to move data from an old layout.
 
@@ -134,6 +135,17 @@ petit_data/
     ├── notes/XXXXX.md                    # the character's own notes (used by other tools, not read by m5-petit-app)
     └── state/last_session.txt            # (used by other tools, not read by m5-petit-app)
 ```
+
+## Extensions
+
+Features that only your home needs can be added as extensions, without editing the base app.
+Put `*.py` files in `$PETIT_DATA_DIR/app_extensions/` and they are loaded at startup.
+
+Each file has a `register(app, ctx)`. See `examples/extensions/hello.py`.
+
+- If an extension fails, the dashboard itself still starts (check with `GET /api/extensions`)
+- Extensions cannot override the base app's routes
+- Extensions are Python code that runs with the same privileges as this dashboard. **Only install ones you trust.**
 
 ## Migrating from an older layout
 

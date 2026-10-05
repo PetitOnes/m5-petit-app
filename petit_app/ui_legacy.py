@@ -206,6 +206,23 @@ async function loadMe() {
   return true;
 }
 
+// Menu entries added by extensions (GET /api/extensions/nav) — appended after the built-in tabs.
+async function loadExtNav() {
+  try {
+    const r = await fetch('/api/extensions/nav');
+    if (!r.ok) return;
+    const tabs = document.querySelector('.tabs');
+    for (const n of await r.json()) {
+      const a = document.createElement('a');
+      a.className = 'tab';
+      a.href = n.path;
+      a.textContent = n.label;
+      a.style.textDecoration = 'none';
+      tabs.appendChild(a);
+    }
+  } catch (e) {}
+}
+
 async function logout() {
   await fetch('/api/auth/logout', {method: 'POST'});
   window.location.href = '/login';
@@ -216,6 +233,7 @@ async function logout() {
 
 async function loadCharacters() {
   if (!(await loadMe())) return;
+  loadExtNav();
   CHARACTERS = await fetch('/api/characters').then(r => r.json());
   if (!CHARACTERS.length) {
     document.getElementById('header-char-name').textContent = ' — (キャラクターが見つかりません)';
